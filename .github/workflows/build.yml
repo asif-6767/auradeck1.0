@@ -22,7 +22,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # 1. Checkout repository
+      # 1. Checkout source
       - name: Checkout source
         uses: actions/checkout@v6
 
@@ -40,23 +40,26 @@ jobs:
                 ZIP_FILE="$file"
                 break
               fi
-            done < <(find . -maxdepth 2 -type f -iname "*.zip")
+            done < <(find . -maxdepth 3 -type f -iname "*.zip")
 
             if [ -z "$ZIP_FILE" ]; then
-              echo "Android project ZIP not found!"
+              echo "ERROR: Android project ZIP not found!"
               exit 1
             fi
 
+            echo "Extracting $ZIP_FILE"
             unzip -o "$ZIP_FILE" -d .
           fi
 
           test -f settings.gradle.kts
+          test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f gradle/libs.versions.toml
+          test -f gradle/wrapper/gradle-wrapper.properties
 
           echo "Android project verified."
 
-      # 3. Setup Java
+      # 3. Setup JDK
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -89,12 +92,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      # 6. Install SDK packages
+      # 6. Install Android SDK packages
       - name: Install Android SDK packages
+        shell: bash
         run: |
+          set -e
+
           sdkmanager --install \
             "platforms;android-36" \
-            "platforms;android-36-ext1" \
             "build-tools;36.0.0" \
             "platform-tools"
 
@@ -104,14 +109,14 @@ jobs:
         with:
           gradle-version: '9.3.1'
 
-      # 8. Verify environment
+      # 8. Verify build environment
       - name: Verify build environment
         run: |
           java -version
           gradle --version
-          ls -lh debug.keystore
+          test -f debug.keystore
 
-      # 9. Build Debug APK
+      # 9. Build AuraDeck Debug APK
       - name: Build Debug APK
         run: |
           gradle --no-daemon --stacktrace :app:assembleDebug
@@ -125,11 +130,11 @@ jobs:
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "APK file not found!"
+            echo "ERROR: APK was not generated!"
             exit 1
           fi
 
-          echo "APK successfully generated:"
+          echo "AuraDeck APK generated successfully."
           ls -lh "$APK"
           sha256sum "$APK"
 
@@ -142,7 +147,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # 12. Upload reports if build fails
+      # 12. Upload build reports on failure
       - name: Upload build reports
         if: failure()
         uses: actions/upload-artifact@v4
