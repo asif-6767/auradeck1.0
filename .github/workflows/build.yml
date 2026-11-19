@@ -17,14 +17,52 @@ concurrency:
 
 jobs:
   build:
-    name: Build Debug APK
+    name: Build AuraDeck APK
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
+      # 1. Checkout repository
       - name: Checkout source
         uses: actions/checkout@v6
 
+      # 2. Extract Android project ZIP if needed
+      - name: Extract Android project
+        shell: bash
+        run: |
+          set -e
+
+          if [ -f "settings.gradle.kts" ]; then
+            echo "Android project already extracted."
+          else
+            ZIP_FILE=""
+
+            while IFS= read -r file; do
+              if unzip -l "$file" | grep -q "settings.gradle.kts"; then
+                ZIP_FILE="$file"
+                break
+              fi
+            done < <(find . -maxdepth 2 -type f -iname "*.zip")
+
+            if [ -z "$ZIP_FILE" ]; then
+              echo "ERROR: Android project ZIP not found!"
+              exit 1
+            fi
+
+            echo "Extracting: $ZIP_FILE"
+            unzip -o "$ZIP_FILE" -d .
+
+          fi
+
+          # Verify project files
+          test -f settings.gradle.kts
+          test -f build.gradle.kts
+          test -f app/build.gradle.kts
+          test -f gradle/libs.versions.toml
+
+          echo "Android project verified."
+
+      # 3. Setup Java
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -32,34 +70,50 @@ jobs:
           java-version: '17'
           cache: gradle
 
+      # 4. Setup Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
+      # 5. Install Android SDK
       - name: Install Android SDK packages
         run: |
-          sdkmanager --install "platforms;android-36" "build-tools;36.0.0" "platform-tools"
+          sdkmanager --install \
+            "platforms;android-36" \
+            "build-tools;36.0.0" \
+            "platform-tools"
 
-      - name: Set up Gradle 9.3.1
+      # 6. Setup Gradle
+      - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
 
-      - name: Verify toolchain
+      # 7. Verify environment
+      - name: Verify build environment
         run: |
           java -version
           gradle --version
 
-      - name: Build debug APK
+      # 8. Build Debug APK
+      - name: Build Debug APK
         run: |
           gradle --no-daemon --stacktrace :app:assembleDebug
 
+      # 9. Verify APK
       - name: Verify APK output
         run: |
-          test -f app/build/outputs/apk/debug/app-debug.apk
-          ls -lh app/build/outputs/apk/debug/app-debug.apk
-          sha256sum app/build/outputs/apk/debug/app-debug.apk
+          APK="app/build/outputs/apk/debug/app-debug.apk"
 
-      - name: Upload debug APK
+          if [ ! -f "$APK" ]; then
+            echo "APK was not generated!"
+            exit 1
+          fi
+
+          ls -lh "$APK"
+          sha256sum "$APK"
+
+      # 10. Upload APK
+      - name: Upload AuraDeck APK
         uses: actions/upload-artifact@v4
         with:
           name: AuraDeck-debug-apk
@@ -67,7 +121,8 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      - name: Upload build reports on failure
+      # 11. Upload error reports
+      - name: Upload build reports
         if: failure()
         uses: actions/upload-artifact@v4
         with:
