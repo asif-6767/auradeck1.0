@@ -26,37 +26,31 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v6
 
-      # 2. Extract Android project ZIP if needed
+      # 2. Extract Android project
       - name: Extract Android project
         shell: bash
         run: |
           set -e
 
-          if [ -f "settings.gradle.kts" ]; then
-            echo "Android project already extracted."
-          else
+          if [ ! -f "app/build.gradle.kts" ]; then
             ZIP_FILE=""
 
             while IFS= read -r file; do
-              if unzip -l "$file" | grep -q "settings.gradle.kts"; then
+              if unzip -l "$file" | grep -q "app/build.gradle.kts"; then
                 ZIP_FILE="$file"
                 break
               fi
             done < <(find . -maxdepth 2 -type f -iname "*.zip")
 
             if [ -z "$ZIP_FILE" ]; then
-              echo "ERROR: Android project ZIP not found!"
+              echo "Android project ZIP not found!"
               exit 1
             fi
 
-            echo "Extracting: $ZIP_FILE"
             unzip -o "$ZIP_FILE" -d .
-
           fi
 
-          # Verify project files
           test -f settings.gradle.kts
-          test -f build.gradle.kts
           test -f app/build.gradle.kts
           test -f gradle/libs.versions.toml
 
@@ -70,49 +64,76 @@ jobs:
           java-version: '17'
           cache: gradle
 
-      # 4. Setup Android SDK
+      # 4. Generate Debug Keystore
+      - name: Generate Debug Keystore
+        shell: bash
+        run: |
+          set -e
+
+          if [ ! -f debug.keystore ]; then
+            keytool -genkeypair -v \
+              -keystore debug.keystore \
+              -storepass android \
+              -alias androiddebugkey \
+              -keypass android \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -dname "CN=Android Debug,O=Android,C=US"
+          fi
+
+          test -f debug.keystore
+          echo "Debug keystore ready."
+
+      # 5. Setup Android SDK
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      # 5. Install Android SDK
+      # 6. Install SDK packages
       - name: Install Android SDK packages
         run: |
           sdkmanager --install \
             "platforms;android-36" \
+            "platforms;android-36-ext1" \
             "build-tools;36.0.0" \
             "platform-tools"
 
-      # 6. Setup Gradle
+      # 7. Setup Gradle
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '9.3.1'
 
-      # 7. Verify environment
+      # 8. Verify environment
       - name: Verify build environment
         run: |
           java -version
           gradle --version
+          ls -lh debug.keystore
 
-      # 8. Build Debug APK
+      # 9. Build Debug APK
       - name: Build Debug APK
         run: |
           gradle --no-daemon --stacktrace :app:assembleDebug
 
-      # 9. Verify APK
+      # 10. Verify APK
       - name: Verify APK output
+        shell: bash
         run: |
+          set -e
+
           APK="app/build/outputs/apk/debug/app-debug.apk"
 
           if [ ! -f "$APK" ]; then
-            echo "APK was not generated!"
+            echo "APK file not found!"
             exit 1
           fi
 
+          echo "APK successfully generated:"
           ls -lh "$APK"
           sha256sum "$APK"
 
-      # 10. Upload APK
+      # 11. Upload APK
       - name: Upload AuraDeck APK
         uses: actions/upload-artifact@v4
         with:
@@ -121,7 +142,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-      # 11. Upload error reports
+      # 12. Upload reports if build fails
       - name: Upload build reports
         if: failure()
         uses: actions/upload-artifact@v4
@@ -130,5 +151,6 @@ jobs:
           path: |
             app/build/reports/
             app/build/outputs/logs/
+            build/reports/
           if-no-files-found: ignore
           retention-days: 7
